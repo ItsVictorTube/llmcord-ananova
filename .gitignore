@@ -8,6 +8,7 @@
 !*.py
 
 !Dockerfile
+!config-yaml
 !config-example.yaml
 !docker-compose.yaml
 !requirements.txt

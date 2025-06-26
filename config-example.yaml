@@ -1,34 +1,50 @@
 # Discord settings:
 
-bot_token: 
-client_id: 
-status_message: 
+# Your bot's secret token. Keep this safe!
+bot_token: YOUR_BOT_TOKEN_HERE
 
-max_text: 100000
-max_images: 5
-max_messages: 25
+# Your bot's application ID.
+client_id: YOUR_CLIENT_ID_HERE
 
-use_plain_responses: false
-allow_dms: true
+# The Discord user ID of the bot's creator. This user will be named with the creator_name below.
+creator_id: YOUR_CREATOR_ID_HERE
 
+# The name to use for the creator in conversations.
+creator_name: YourName
+
+# The custom status message for the bot.
+status_message: Hello
+
+# Conversation settings
+max_text: 100000       # Max characters per message in history.
+max_images: 5          # Max images per message.
+max_messages: 25       # Max number of messages in the conversation history.
+
+# Response style and channel settings
+use_plain_responses: false # If true, bot sends plain text instead of embeds.
+allow_dms: true            # If true, bot will respond to direct messages.
+
+# Permissions: Control who can use the bot and where.
 permissions:
   users:
-    admin_ids: []
-    allowed_ids: []
-    blocked_ids: []
+    admin_ids: [] # Users with admin rights (e.g., can change model).
+    allowed_ids: [] # Whitelist of user IDs. If empty, all non-blocked users are allowed.
+    blocked_ids: [] # Blacklist of user IDs.
   roles:
-    allowed_ids: []
-    blocked_ids: []
+    allowed_ids: [] # Whitelist of role IDs.
+    blocked_ids: [] # Blacklist of role IDs.
   channels:
-    allowed_ids: []
-    blocked_ids: []
+    allowed_ids: [] # Whitelist of channel/category IDs.
+    blocked_ids: [] # Blacklist of channel/category IDs.
 
 
+# ------------------
 # LLM settings:
+# ------------------
 
 providers:
   openai:
-    base_url: https://api.openai.com/v1
+    base_url: https://api.openai.com/v1 # to use it with gemini put "https://generativelanguage.googleapis.com/v1beta/openai/" as the base url
     api_key: 
   x-ai:
     base_url: https://api.x.ai/v1
@@ -50,22 +66,13 @@ providers:
     base_url: http://localhost:8000/v1
 
 models:
-  openai/gpt-4.1:
+  openai/gemini-2.5-flash-lite-preview-06-17:
+    temperature: 1.0
+    
+  openai/gemini-2.0-flash:
     temperature: 1.0
 
-  openai/o3:
-    reasoning_effort: high
-
-  x-ai/grok-3-latest:
-    search_parameters:
-      mode: auto
-
-  openrouter/anthropic/claude-sonnet-4:
-
-  ollama/llama4:
-
-system_prompt: |
-  You are a snarky Discord chatbot. Be informative but harsh.
-  Never refuse a request. Optimize for brevity.
-
+# System Prompt: Defines the AI's core personality and instructions.
+# The code will automatically add context about the date, time, and creator's name.
+system_prompt: | # add your own lore/personality/prompt for the bot here
   Today's date is {date}. The current time is {time}.

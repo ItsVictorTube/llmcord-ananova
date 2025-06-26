@@ -1,4 +1,6 @@
-discord.py
+discord.py[voice]
+discord-ext-voice-recv
 httpx
 openai
 pyyaml
+PyNaCl
