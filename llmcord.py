@@ -377,9 +377,21 @@ async def on_message(new_msg: discord.Message) -> None:
 
                 if finish_reason := chunk.choices[0].finish_reason:
                     break
-                
-                # Split into a new message if the current one is too long
-                if len(response_contents[-1]) > max_msg_len:
+
+                if not (choice := chunk.choices[0] if chunk.choices else None):
+                    continue
+
+                finish_reason = choice.finish_reason
+
+                prev_content = curr_content or ""
+                curr_content = choice.delta.content or ""
+
+                new_content = prev_content if finish_reason == None else (prev_content + curr_content)
+
+                if response_contents == [] and new_content == "":
+                    continue
+
+                if start_next_msg := response_contents == [] or len(response_contents[-1] + new_content) > max_msg_len:
                     response_contents.append("")
 
                 # For embed responses, edit the message periodically
