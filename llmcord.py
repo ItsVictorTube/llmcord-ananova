@@ -330,16 +330,126 @@ async def on_message(new_msg: discord.Message) -> None:
 
     # 2. Permissions: Check if the user and channel are authorized
     config = await asyncio.to_thread(get_config)
-    if not await _is_message_authorized(new_msg, config):
-        logging.warning(f"Unauthorized message from user {new_msg.author.id} in channel {new_msg.channel.id}")
+
+    allow_dms = config.get("allow_dms", True)
+
+    permissions = config["permissions"]
+
+    user_is_admin = new_msg.author.id in permissions["users"]["admin_ids"]
+
+    (allowed_user_ids, blocked_user_ids), (allowed_role_ids, blocked_role_ids), (allowed_channel_ids, blocked_channel_ids) = (
+        (perm["allowed_ids"], perm["blocked_ids"]) for perm in (permissions["users"], permissions["roles"], permissions["channels"])
+    )
+
+    allow_all_users = not allowed_user_ids if is_dm else not allowed_user_ids and not allowed_role_ids
+    is_good_user = user_is_admin or allow_all_users or new_msg.author.id in allowed_user_ids or any(id in allowed_role_ids for id in role_ids)
+    is_bad_user = not is_good_user or new_msg.author.id in blocked_user_ids or any(id in blocked_role_ids for id in role_ids)
+
+    allow_all_channels = not allowed_channel_ids
+    is_good_channel = user_is_admin or allow_dms if is_dm else allow_all_channels or any(id in allowed_channel_ids for id in channel_ids)
+    is_bad_channel = not is_good_channel or any(id in blocked_channel_ids for id in channel_ids)
+
+    if is_bad_user or is_bad_channel:
         return
 
-    # 3. Build Conversation Chain: Traverse replies to create context for the LLM
-    messages, user_warnings = await _build_message_chain(new_msg, config, discord_bot.user)
-    logging.info(f"Message received (user ID: {new_msg.author.id}, conversation length: {len(messages)}):\n{new_msg.content}")
+    provider_slash_model = curr_model
+    provider, model = provider_slash_model.split("/", 1)
+    model_parameters = config["models"].get(provider_slash_model, None)
 
-    # 4. Prepare System Prompt: Add context about date, time, and user naming
-    if system_prompt := config.get("system_prompt"):
+    base_url = config["providers"][provider]["base_url"]
+    api_key = config["providers"][provider].get("api_key", "sk-no-key-required")
+    openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+
+    accept_images = any(x in model.lower() for x in VISION_MODEL_TAGS)
+    accept_usernames = any(x in provider_slash_model.lower() for x in PROVIDERS_SUPPORTING_USERNAMES)
+
+    max_text = config.get("max_text", 100000)
+    max_images = config.get("max_images", 5) if accept_images else 0
+    max_messages = config.get("max_messages", 25)
+
+    # Build message chain and set user warnings
+    messages = []
+    user_warnings = set()
+    curr_msg = new_msg
+
+    while curr_msg != None and len(messages) < max_messages:
+        curr_node = msg_nodes.setdefault(curr_msg.id, MsgNode())
+
+        async with curr_node.lock:
+            if curr_node.text == None:
+                cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
+
+                good_attachments = [att for att in curr_msg.attachments if att.content_type and any(att.content_type.startswith(x) for x in ("text", "image"))]
+
+                attachment_responses = await asyncio.gather(*[httpx_client.get(att.url) for att in good_attachments])
+
+                curr_node.text = "\n".join(
+                    ([cleaned_content] if cleaned_content else [])
+                    + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text))) for embed in curr_msg.embeds]
+                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
+                )
+
+                curr_node.images = [
+                    dict(type="image_url", image_url=dict(url=f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}"))
+                    for att, resp in zip(good_attachments, attachment_responses)
+                    if att.content_type.startswith("image")
+                ]
+
+                curr_node.role = "assistant" if curr_msg.author == discord_bot.user else "user"
+
+                curr_node.user_id = curr_msg.author.id if curr_node.role == "user" else None
+
+                curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_attachments)
+
+                try:
+                    if (
+                        curr_msg.reference == None
+                        and discord_bot.user.mention not in curr_msg.content
+                        and (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0])
+                        and prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply)
+                        and prev_msg_in_channel.author == (discord_bot.user if curr_msg.channel.type == discord.ChannelType.private else curr_msg.author)
+                    ):
+                        curr_node.parent_msg = prev_msg_in_channel
+                    else:
+                        is_public_thread = curr_msg.channel.type == discord.ChannelType.public_thread
+                        parent_is_thread_start = is_public_thread and curr_msg.reference == None and curr_msg.channel.parent.type == discord.ChannelType.text
+
+                        if parent_msg_id := curr_msg.channel.id if parent_is_thread_start else getattr(curr_msg.reference, "message_id", None):
+                            if parent_is_thread_start:
+                                curr_node.parent_msg = curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(parent_msg_id)
+                            else:
+                                curr_node.parent_msg = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(parent_msg_id)
+
+                except (discord.NotFound, discord.HTTPException):
+                    logging.exception("Error fetching next message in the chain")
+                    curr_node.fetch_parent_failed = True
+
+            if curr_node.images[:max_images]:
+                content = ([dict(type="text", text=curr_node.text[:max_text])] if curr_node.text[:max_text] else []) + curr_node.images[:max_images]
+            else:
+                content = curr_node.text[:max_text]
+
+            if content != "":
+                message = dict(content=content, role=curr_node.role)
+                if accept_usernames and curr_node.user_id != None:
+                    message["name"] = str(curr_node.user_id)
+
+                messages.append(message)
+
+            if len(curr_node.text) > max_text:
+                user_warnings.add(f"⚠️ Max {max_text:,} characters per message")
+            if len(curr_node.images) > max_images:
+                user_warnings.add(f"⚠️ Max {max_images} image{'' if max_images == 1 else 's'} per message" if max_images > 0 else "⚠️ Can't see images")
+            if curr_node.has_bad_attachments:
+                user_warnings.add("⚠️ Unsupported attachments")
+            if curr_node.fetch_parent_failed or (curr_node.parent_msg != None and len(messages) == max_messages):
+                user_warnings.add(f"⚠️ Only using last {len(messages)} message{'' if len(messages) == 1 else 's'}")
+
+            curr_msg = curr_node.parent_msg
+
+    logging.info(f"Message received (user ID: {new_msg.author.id}, attachments: {len(new_msg.attachments)}, conversation length: {len(messages)}):\n{new_msg.content}")
+
+    if system_prompt := config["system_prompt"]:
         now = datetime.now().astimezone()
         prompt = system_prompt.replace("{date}", now.strftime("%B %d, %Y")).replace("{time}", now.strftime("%I:%M %p %Z"))
         prompt += "\nEach user's message is prefixed with their display name."
@@ -364,7 +474,8 @@ async def on_message(new_msg: discord.Message) -> None:
     for warning in sorted(user_warnings):
         embed.add_field(name=warning, value="", inline=False)
 
-    max_msg_len = 2000 if config.get("use_plain_responses") else (4096 - len(STREAMING_INDICATOR))
+    use_plain_responses = config.get("use_plain_responses", False)
+    max_message_length = 2000 if use_plain_responses else (4096 - len(STREAMING_INDICATOR))
 
     try:
         async with new_msg.channel.typing():
