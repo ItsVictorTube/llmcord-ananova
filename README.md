@@ -49,6 +49,7 @@ Or run local models with:
 ---
 
 ### And more:
+- **🎤 Voice Features**: Speech-to-Text (STT) and Text-to-Speech (TTS) for voice conversations
 - Supports image attachments when using a vision model (like gpt-4.1, claude-4, llama-4, etc.)
 - Supports text file attachments (.txt, .py, .c, etc.)
 - Customizable personality (aka system prompt)
@@ -58,7 +59,7 @@ Or run local models with:
 - Displays helpful warnings when appropriate (like "⚠️ Only using last 25 messages" when the customizable message limit is exceeded)
 - Caches message data in a size-managed (no memory leaks) and mutex-protected (no race conditions) global dictionary to maximize efficiency and minimize Discord API calls
 - Fully asynchronous
-- 1 Python file, ~200 lines of code
+- Modular design with cogs for easy extension
 
 ## Instructions
 
@@ -96,13 +97,31 @@ Or run local models with:
    **No Docker:**
    ```bash
    python -m pip install -U -r requirements.txt
-   python llmcord.py
+   python bot.py
    ```
 
    **With Docker:**
    ```bash
    docker compose up
    ```
+
+## Voice Features
+
+The bot now includes voice capabilities for natural voice conversations:
+
+### Voice Commands:
+- `/voice` - Start voice conversation with automatic STT/TTS
+- `/voice_stop` - Stop voice conversation and leave channel  
+- `/voice_speak <text>` - Make bot speak specific text
+- `/voice_status` - Check voice conversation status
+- `/voice_help` - Show voice commands help
+
+### Setup:
+1. Install FFmpeg (required for audio processing)
+2. Install dependencies: `pip install -r requirements.txt`
+3. Join a voice channel and use `/voice` to start
+
+See `VOICE_SETUP.md` for detailed setup instructions.
 
 ## Notes
 

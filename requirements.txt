@@ -4,3 +4,7 @@ httpx
 openai
 pyyaml
 PyNaCl
+gTTS
+openai-whisper
+torch
+numpy

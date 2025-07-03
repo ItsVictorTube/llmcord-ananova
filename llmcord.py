@@ -1,5 +1,7 @@
 # -----------------------------------------------------------------------------
-# llmcord.py: A Discord bot that connects to a Large Language Model (LLM)
+# llmcord.py: (Original, monolithic version)
+# NOTE: The code has been split into modules and cogs for maintainability.
+# This file is preserved as a reference.
 # -----------------------------------------------------------------------------
 
 # --- IMPORTS ---
@@ -48,7 +50,24 @@ def get_config(filename: str = "config.yaml") -> dict[str, Any]:
     with open(filename, encoding="utf-8") as file:
         return yaml.safe_load(file)
 
+def validate_config(config: dict) -> None:
+    """Validate configuration structure and required fields."""
+    required_fields = {
+        "bot_token": str,
+        "providers": dict,
+        "models": dict,
+        "permissions": dict
+    }
+    for field, expected_type in required_fields.items():
+        if field not in config:
+            raise ValueError(f"Missing required config field: {field}")
+        if not isinstance(config[field], expected_type):
+            raise TypeError(f"Config field {field} must be {expected_type.__name__}")
+    if not config["models"]:
+        raise ValueError("At least one model must be configured")
+
 config = get_config()
+validate_config(config)
 
 
 # --- GLOBAL STATE ---
@@ -486,9 +505,27 @@ async def on_message(new_msg: discord.Message) -> None:
 
     try:
         async with new_msg.channel.typing():
-            stream = await openai_client.chat.completions.create(
-                model=model, messages=messages, stream=True, extra_body=current_config["models"].get(provider_slash_model)
-            )
+            # Improved error handling for LLM API call
+            try:
+                stream = await openai_client.chat.completions.create(
+                    model=model, messages=messages, stream=True, extra_body=current_config["models"].get(provider_slash_model)
+                )
+            except httpx.TimeoutException:
+                await new_msg.reply("Request timed out. Please try again.", silent=True)
+                return
+            except httpx.HTTPStatusError as e:
+                if e.response.status_code == 429:
+                    await new_msg.reply("Rate limited. Please wait a moment.", silent=True)
+                elif e.response.status_code == 401:
+                    logging.error("Invalid API key for provider %s", provider)
+                    await new_msg.reply("Configuration error. Please contact an admin.", silent=True)
+                else:
+                    await new_msg.reply(f"API error: {e.response.status_code}", silent=True)
+                return
+            except Exception as e:
+                logging.exception("Unexpected error in LLM response generation")
+                await new_msg.reply("An unexpected error occurred.", silent=True)
+                return
             async for chunk in stream:
                 delta_content = chunk.choices[0].delta.content or ""
                 
@@ -567,6 +604,9 @@ async def main() -> None:
         logging.critical("Failed to log in. Please check your 'bot_token' in the config file.")
     except Exception:
         logging.critical("An unexpected error occurred during bot startup.", exc_info=True)
+    finally:
+        # Ensure httpx_client is closed on shutdown
+        await httpx_client.aclose()
 
 if __name__ == "__main__":
     try:
