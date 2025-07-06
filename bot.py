@@ -5,6 +5,7 @@ from utils.config import get_config, validate_config
 from utils.http_client import httpx_client
 from discord.ext import commands
 import discord
+import time
 
 # --- LOGGING SETUP ---
 logging.basicConfig(
@@ -21,7 +22,7 @@ intents = discord.Intents.default()
 intents.message_content = True
 intents.voice_states = True  # Required for voice connections
 activity = discord.CustomActivity(name=(config.get("status_message", "github.com/jakobdylanc/llmcord"))[:128])
-bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
+bot = commands.Bot(intents=intents, activity=activity, command_prefix="")
 
 @bot.event
 async def on_ready():
@@ -47,7 +48,6 @@ async def on_ready():
 async def load_cogs():
     await bot.load_extension("cogs.llm")
     await bot.load_extension("cogs.admin")
-    await bot.load_extension("cogs.voice")
     await bot.load_extension("cogs.voice_llm")
     # Add more cogs as needed
 

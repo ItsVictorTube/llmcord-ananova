@@ -86,7 +86,7 @@ intents = discord.Intents.default()
 intents.message_content = True  # Required to read message content
 
 activity = discord.CustomActivity(name=(config.get("status_message", "github.com/jakobdylanc/llmcord"))[:128])
-discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=None)
+discord_bot = commands.Bot(intents=intents, activity=activity, command_prefix=" ")
 
 # Asynchronous HTTP client for fetching attachment content
 httpx_client = httpx.AsyncClient()
@@ -181,7 +181,7 @@ async def _build_message_chain(start_msg: discord.Message, config: dict, bot_use
                 base_text = "\n".join(
                     ([cleaned_content] if cleaned_content else [])
                     + [f"{embed.title}\n{embed.description}" for embed in curr_msg.embeds if embed.title or embed.description]
-                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
+                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type and att.content_type.startswith("text")]
                 )
 
                 # 2. Assign role and format user message with display name
@@ -195,24 +195,26 @@ async def _build_message_chain(start_msg: discord.Message, config: dict, bot_use
                 # 3. Fetch image attachments
                 node.images = [
                     {"type": "image_url", "image_url": {"url": f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}"}}
-                    for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("image")
+                    for att, resp in zip(good_attachments, attachment_responses) if att.content_type and att.content_type.startswith("image")
                 ]
 
                 # 4. Find the parent message in the conversation chain
                 try:
-                    if curr_msg.reference:
+                    parent_message_to_fetch = None
+                    if curr_msg.reference and curr_msg.reference.message_id:
                         node.parent_msg = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(curr_msg.reference.message_id)
                     # Implicitly link to previous message if it's a natural continuation
-                    elif (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]):
-                         if prev_msg_in_channel.author in (bot_user, curr_msg.author):
-                             node.parent_msg = prev_msg_in_channel
+                    elif isinstance(curr_msg.channel, (discord.TextChannel, discord.Thread)):
+                        if (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]):
+                            if prev_msg_in_channel and prev_msg_in_channel.author in (bot_user, curr_msg.author):
+                                node.parent_msg = prev_msg_in_channel
 
                 except (discord.NotFound, discord.HTTPException):
                     node.fetch_parent_failed = True
                     logging.exception("Failed to fetch parent message.")
 
             # --- Format node content for the API and add warnings ---
-            api_content = node.text[:max_text_per_message]
+            api_content = node.text[:max_text_per_message] if node.text else ""
             if node.images[:max_images_per_message]:
                 api_content = ([{"type": "text", "text": api_content}] if api_content else []) + node.images[:max_images_per_message]
 
@@ -220,7 +222,7 @@ async def _build_message_chain(start_msg: discord.Message, config: dict, bot_use
                 messages.append({"role": node.role, "content": api_content})
 
             # Add warnings if content was truncated or had issues
-            if len(node.text) > max_text_per_message:
+            if node.text and len(node.text) > max_text_per_message:
                 user_warnings.add(f"⚠️ Max {max_text_per_message:,} characters per message")
             if len(node.images) > max_images_per_message:
                 user_warnings.add(f"⚠️ Max {max_images_per_message} image(s) per message" if max_images_per_message > 0 else "⚠️ This model can't see images")
@@ -292,11 +294,12 @@ async def purge_command(interaction: discord.Interaction, limit: int = 1) -> Non
     limit = max(1, min(100, limit))
     messages_to_delete = []
     # We search a bit more than the limit in case of interspersed user messages
-    async for message in interaction.channel.history(limit=limit * 5):
-        if len(messages_to_delete) >= limit:
-            break
-        if message.author.id == discord_bot.user.id:
-            messages_to_delete.append(message)
+    if isinstance(interaction.channel, (discord.TextChannel, discord.DMChannel, discord.GroupChannel, discord.Thread)):
+        async for message in interaction.channel.history(limit=limit * 5):
+            if len(messages_to_delete) >= limit:
+                break
+            if message.author.id == discord_bot.user.id: # type: ignore
+                messages_to_delete.append(message)
 
     if not messages_to_delete:
         await interaction.followup.send("No recent messages from me found to delete.")
@@ -310,14 +313,16 @@ async def purge_command(interaction: discord.Interaction, limit: int = 1) -> Non
                 await msg.delete()
         else:
             # Bulk delete is more efficient in server text channels
-            await interaction.channel.delete_messages(messages_to_delete)
+            if isinstance(interaction.channel, (discord.TextChannel, discord.Thread)):
+                await interaction.channel.delete_messages(messages_to_delete)
 
         deleted_count = len(messages_to_delete)
         plural = "s" if deleted_count > 1 else ""
         await interaction.followup.send(f"Successfully deleted my last {deleted_count} message{plural}.")
 
     except discord.Forbidden:
-        logging.warning(f"Missing permissions to delete messages in channel {interaction.channel.id}")
+        channel_id = str(interaction.channel.id) if interaction.channel and interaction.channel.id else "Unknown"
+        logging.warning(f"Missing permissions to delete messages in channel {{{channel_id}}}")
         await interaction.followup.send("I lack the 'Manage Messages' permission to delete messages in this channel.")
     except discord.HTTPException as e:
         # This often happens for messages older than 14 days with bulk delete
@@ -356,7 +361,7 @@ async def on_message(new_msg: discord.Message) -> None:
     global last_task_time, msg_nodes
 
     # 1. Initial Checks: Ignore bots and messages not mentioning the bot (in servers)
-    if new_msg.author.bot or (new_msg.channel.type != discord.ChannelType.private and discord_bot.user not in new_msg.mentions):
+    if new_msg.author.bot or (new_msg.channel.type != discord.ChannelType.private and discord_bot.user and discord_bot.user not in new_msg.mentions):
         return
 
     # 2. Permissions: Check if the user and channel are authorized
@@ -396,7 +401,7 @@ async def on_message(new_msg: discord.Message) -> None:
         async with curr_node.lock:
             if curr_node.text is None: # Only process if not already cached
                 # Remove bot mention from content if present
-                cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention).lstrip()
+                cleaned_content = curr_msg.content.removeprefix(discord_bot.user.mention if discord_bot.user else "").lstrip()
 
                 # Filter attachments for text and image types
                 good_attachments = [att for att in curr_msg.attachments if att.content_type and any(att.content_type.startswith(x) for x in ("text", "image"))]
@@ -407,12 +412,12 @@ async def on_message(new_msg: discord.Message) -> None:
                 # Combine text from content, embeds, and text attachments
                 base_text = "\n".join(
                     ([cleaned_content] if cleaned_content else [])
-                    + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text))) for embed in curr_msg.embeds]
-                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
+                    + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text if embed.footer and embed.footer.text else None))) for embed in curr_msg.embeds]
+                    + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type and att.content_type.startswith("text")]
                 )
 
                 # Set role and user_id for the message node
-                curr_node.role = "assistant" if curr_msg.author == discord_bot.user else "user"
+                curr_node.role = "assistant" if discord_bot.user and curr_msg.author == discord_bot.user else "user"
                 curr_node.user_id = curr_msg.author.id if curr_node.role == "user" else None
                 curr_node.text = base_text
 
@@ -420,7 +425,7 @@ async def on_message(new_msg: discord.Message) -> None:
                 curr_node.images = [
                     dict(type="image_url", image_url=dict(url=f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}"))
                     for att, resp in zip(good_attachments, attachment_responses)
-                    if att.content_type.startswith("image")
+                    if att.content_type and att.content_type.startswith("image")
                 ]
 
                 # Track if any unsupported attachments were present
@@ -429,17 +434,21 @@ async def on_message(new_msg: discord.Message) -> None:
                 # Determine the parent message for conversation threading
                 try:
                     parent_message_to_fetch = None
-                    if curr_msg.reference:
+                    if curr_msg.reference and curr_msg.reference.message_id:
                         # Direct reply: use the referenced message
                         parent_message_to_fetch = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(curr_msg.reference.message_id)
-                    elif curr_msg.channel.type == discord.ChannelType.public_thread and curr_msg.reference is None:
+                    elif isinstance(curr_msg.channel, discord.Thread) and curr_msg.reference is None:
                         # If it's the first message in a public thread, its parent is the thread's starter message
-                        parent_message_to_fetch = curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(curr_msg.channel.id)
-                    elif (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]):
-                        # Implicit continuation: if the previous message was by the bot or current user
-                        if prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply) and \
-                           prev_msg_in_channel.author in (discord_bot.user, curr_msg.author):
-                            parent_message_to_fetch = prev_msg_in_channel
+                        parent_message_to_fetch = curr_msg.channel.starter_message
+                        if not parent_message_to_fetch and isinstance(curr_msg.channel.parent, discord.TextChannel) and curr_msg.channel.parent.id:
+                            parent_message_to_fetch = await curr_msg.channel.parent.fetch_message(curr_msg.channel.id)
+                    elif isinstance(curr_msg.channel, (discord.TextChannel, discord.DMChannel, discord.GroupChannel, discord.Thread)):
+                        if (channel_history := [m async for m in curr_msg.channel.history(before=curr_msg, limit=1)]):
+                            prev_msg_in_channel = channel_history[0] if channel_history else None
+                            # Implicit continuation: if the previous message was by the bot or current user
+                            if prev_msg_in_channel and prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply) and \
+                               (discord_bot.user and prev_msg_in_channel.author == discord_bot.user or prev_msg_in_channel.author == curr_msg.author):
+                                parent_message_to_fetch = prev_msg_in_channel
                     
                     curr_node.parent_msg = parent_message_to_fetch
 
@@ -448,7 +457,7 @@ async def on_message(new_msg: discord.Message) -> None:
                     curr_node.fetch_parent_failed = True
 
             # Format node content for the API request
-            api_content = curr_node.text[:max_text]
+            api_content = curr_node.text[:max_text] if curr_node.text else ""
             if curr_node.images[:max_images]:
                 # If images are accepted and present, content is a list of text/image objects
                 api_content = ([dict(type="text", text=api_content)] if api_content else []) + curr_node.images[:max_images]
@@ -462,7 +471,7 @@ async def on_message(new_msg: discord.Message) -> None:
                 messages.append(message_for_api)
 
             # Add user warnings based on content truncation or issues
-            if len(curr_node.text) > max_text:
+            if curr_node.text and len(curr_node.text) > max_text:
                 user_warnings.add(f"⚠️ Max {max_text:,} characters per message")
             if len(curr_node.images) > max_images:
                 user_warnings.add(f"⚠️ Max {max_images} image{'' if max_images == 1 else 's'} per message" if max_images > 0 else "⚠️ Can't see images")
@@ -542,8 +551,8 @@ async def on_message(new_msg: discord.Message) -> None:
                 if not use_plain_responses:
                     time_since_last_edit = datetime.now().timestamp() - last_task_time
                     if (edit_task is None or edit_task.done()) and time_since_last_edit >= EDIT_DELAY_SECONDS:
-                        if edit_task: await edit_task # Ensure previous task is complete before starting a new one
-                        
+                        if edit_task and not edit_task.done(): await edit_task # Ensure previous task is complete before starting a new one
+
                         embed.description = response_contents[-1] + STREAMING_INDICATOR
                         embed.color = EMBED_COLOR_INCOMPLETE
 

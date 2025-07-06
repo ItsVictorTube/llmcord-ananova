@@ -1,4 +1,4 @@
-discord.py[voice]
+discord.py[voice] @ git+https://github.com/Rapptz/discord.py.git
 discord-ext-voice-recv
 httpx
 openai
@@ -7,4 +7,5 @@ PyNaCl
 gTTS
 openai-whisper
 torch
-numpy
+numpy==2.2.6
+googletrans

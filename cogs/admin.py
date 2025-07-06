@@ -3,6 +3,7 @@ import discord
 from discord.ext import commands
 from discord import app_commands, Interaction
 from utils.config import get_config
+from discord import TextChannel, Thread
 
 class Admin(commands.Cog):
     """Cog for admin commands like model switching and purge."""
@@ -37,10 +38,10 @@ class Admin(commands.Cog):
             config = await interaction.client.loop.run_in_executor(None, get_config)
         filtered_models = [m for m in config["models"] if current_input.lower() in m.lower()]
         choices = [
-            app_commands.Choice(name=f"○ {m}", value=m) for m in filtered_models if m != self.curr_model
+            app_commands.Choice(name=f"○ {m}", value=str(m)) for m in filtered_models if m != self.curr_model and m is not None
         ][:24]
-        if self.curr_model in filtered_models:
-            choices.append(app_commands.Choice(name=f"◉ {self.curr_model} (current)", value=self.curr_model))
+        if self.curr_model and self.curr_model in filtered_models:
+            choices.append(app_commands.Choice(name=f"◉ {self.curr_model} (current)", value=str(self.curr_model)))
         return choices
 
     @app_commands.command(name="purge", description="Admin: Deletes the bot's recent messages in this channel.")
@@ -54,25 +55,32 @@ class Admin(commands.Cog):
         await interaction.response.defer(ephemeral=True, thinking=True)
         limit = max(1, min(100, limit))
         messages_to_delete = []
-        async for message in interaction.channel.history(limit=limit * 5):
-            if len(messages_to_delete) >= limit:
-                break
-            if message.author.id == self.bot.user.id:
-                messages_to_delete.append(message)
-        if not messages_to_delete:
-            await interaction.followup.send("No recent messages from me found to delete.")
+        channel = interaction.channel
+        # Only proceed if channel supports history
+        if not isinstance(channel, (TextChannel, Thread, discord.DMChannel, discord.GroupChannel)):
+            await interaction.followup.send("This channel type does not support message deletion.")
             return
         try:
-            if isinstance(interaction.channel, (discord.DMChannel, discord.GroupChannel)):
+            if isinstance(channel, (TextChannel, Thread)):
+                async for message in channel.history(limit=limit * 5):
+                    if len(messages_to_delete) >= limit:
+                        break
+                    if message.author.id == self.bot.user.id:  # type: ignore
+                        messages_to_delete.append(message)
+            if isinstance(channel, (discord.DMChannel, discord.GroupChannel)):
                 for msg in messages_to_delete:
                     await msg.delete()
+            elif isinstance(channel, (TextChannel, Thread)) and hasattr(channel, "delete_messages"):
+                await channel.delete_messages(messages_to_delete)
             else:
-                await interaction.channel.delete_messages(messages_to_delete)
+                for msg in messages_to_delete:
+                    await msg.delete()
             deleted_count = len(messages_to_delete)
             plural = "s" if deleted_count > 1 else ""
             await interaction.followup.send(f"Successfully deleted my last {deleted_count} message{plural}.")
         except discord.Forbidden:
-            logging.warning(f"Missing permissions to delete messages in channel {interaction.channel.id}")
+            channel_id = getattr(channel, "id", "unknown")
+            logging.warning(f"Missing permissions to delete messages in channel {channel_id}")
             await interaction.followup.send("I lack the 'Manage Messages' permission to delete messages in this channel.")
         except discord.HTTPException as e:
             logging.error(f"Failed to delete messages: {e}")
