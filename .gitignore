@@ -1,14 +1,10 @@
-# This gitignore is a whitelist. Inspired by https://rgbcu.be/blog/gitignore
+# .gitignore
 
-*
-
-!.gitignore
-
-!*.md
-!*.py
+*.pyc
+*.yaml
 
 !Dockerfile
-!config-yaml
 !config-example.yaml
+!config-voice-example.yaml
 !docker-compose.yaml
 !requirements.txt

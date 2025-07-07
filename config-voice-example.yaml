@@ -1,0 +1,71 @@
+# Example configuration with voice features enabled
+# Copy this to config.yaml and modify as needed
+
+bot_token: "YOUR_BOT_TOKEN_HERE"
+
+# Voice-specific settings
+voice:
+  # TTS settings
+  tts:
+    language: "en"  # Language code for TTS
+    slow: false     # Slow speech for better clarity
+  
+  # STT settings  
+  stt:
+    model: "tiny"   # Whisper model: tiny, base, small, medium, large
+    language: "en"  # Language for speech recognition
+  
+  # Voice activity detection
+  vad:
+    enabled: true
+    silence_threshold: 2.0  # Seconds of silence before stopping recording
+    
+  # Audio settings
+  audio:
+    sample_rate: 16000
+    channels: 1
+    format: "wav"
+
+# LLM Configuration
+providers:
+  openai:
+    base_url: "https://api.openai.com/v1"
+    api_key: "YOUR_OPENAI_API_KEY"
+
+models:
+  "openai/gpt-4o-mini":
+    temperature: 0.7
+    max_tokens: 1000
+
+# System prompt for voice conversations
+system_prompt: |
+  You are a helpful AI assistant in a voice conversation. 
+  Keep your responses concise and natural for speech.
+  Be friendly and engaging.
+  Current date: {date}
+  Current time: {time}
+
+# Permissions
+permissions:
+  users:
+    admin_ids: [YOUR_USER_ID]
+    allowed_ids: []
+    blocked_ids: []
+  roles:
+    allowed_ids: []
+    blocked_ids: []
+  channels:
+    allowed_ids: []
+    blocked_ids: []
+
+# General settings
+max_messages: 10
+max_text: 4096
+max_images: 1
+use_plain_responses: false
+allow_dms: true
+status_message: "Voice-enabled LLM Bot"
+
+# Creator info (optional)
+creator_id: YOUR_USER_ID
+creator_name: "Your Name" 
