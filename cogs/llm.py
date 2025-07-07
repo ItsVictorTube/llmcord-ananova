@@ -34,20 +34,24 @@ class LLM(commands.Cog):
         self.bot = bot
         self.msg_nodes = {}
         self.last_task_time = 0
-        self.curr_model = None
+        self.curr_model = "" # Initialize to empty string
 
     @commands.Cog.listener()
     async def on_ready(self):
         config = get_config()
-        self.curr_model = next(iter(config["models"]))
-        logging.info("LLM Cog ready. Current model: %s", self.curr_model)
+        if config["models"]: # Check if models exist
+            self.curr_model = next(iter(config["models"]))
+            logging.info("LLM Cog ready. Current model: %s", self.curr_model)
+        else:
+            logging.warning("No models configured. LLM Cog will not function.")
+            self.curr_model = "" # Ensure it remains empty if no models
 
     async def generate_voice_response(self, user_message: str, user_name: str, channel) -> str:
         """Generate a response for voice input."""
         try:
             current_config = await asyncio.to_thread(get_config)
             provider_slash_model = self.curr_model
-            provider, model = provider_slash_model.split("/", 1)
+            provider, model = provider_slash_model.split("/", 1) 
             provider_config = current_config["providers"][provider]
             base_url = provider_config["base_url"]
             api_key = provider_config.get("api_key", "sk-no-key-required")
@@ -80,7 +84,7 @@ class LLM(commands.Cog):
                 extra_body=current_config["models"].get(provider_slash_model)
             )
             
-            return response.choices[0].message.content.strip()
+            return (response.choices[0].message.content or "").strip()
             
         except Exception as e:
             logging.error(f"Error generating voice response: {e}")
@@ -123,7 +127,7 @@ class LLM(commands.Cog):
                     base_text = "\n".join(
                         ([cleaned_content] if cleaned_content else [])
                         + ["\n".join(filter(None, (embed.title, embed.description, embed.footer.text))) for embed in curr_msg.embeds]
-                        + [resp.text for att, resp in zip(good_attachments, attachment_responses) if att.content_type.startswith("text")]
+                        + [resp.text for att, resp in zip(good_attachments, attachment_responses) if str(att.content_type).startswith("text")]
                     )
                     curr_node.role = "assistant" if curr_msg.author == self.bot.user else "user"
                     curr_node.user_id = curr_msg.author.id if curr_node.role == "user" else None
@@ -131,17 +135,18 @@ class LLM(commands.Cog):
                     curr_node.images = [
                         dict(type="image_url", image_url=dict(url=f"data:{att.content_type};base64,{b64encode(resp.content).decode('utf-8')}") )
                         for att, resp in zip(good_attachments, attachment_responses)
-                        if att.content_type.startswith("image")
+                        if str(att.content_type).startswith("image")
                     ]
                     curr_node.has_bad_attachments = len(curr_msg.attachments) > len(good_attachments)
                     try:
                         parent_message_to_fetch = None
-                        if curr_msg.reference:
+                        if curr_msg.reference and curr_msg.reference.message_id is not None:
                             parent_message_to_fetch = curr_msg.reference.cached_message or await curr_msg.channel.fetch_message(curr_msg.reference.message_id)
-                        elif curr_msg.channel.type == discord.ChannelType.public_thread and curr_msg.reference is None:
-                            parent_message_to_fetch = curr_msg.channel.starter_message or await curr_msg.channel.parent.fetch_message(curr_msg.channel.id)
+                        elif isinstance(curr_msg.channel, discord.Thread) and curr_msg.channel.type == discord.ChannelType.public_thread and curr_msg.reference is None:
+                            # For public threads, get the starter message. If not cached, we don't attempt to fetch from parent.
+                            parent_message_to_fetch = curr_msg.channel.starter_message
                         elif (prev_msg_in_channel := ([m async for m in curr_msg.channel.history(before=curr_msg, limit=1)] or [None])[0]):
-                            if prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply) and \
+                            if prev_msg_in_channel is not None and prev_msg_in_channel.type in (discord.MessageType.default, discord.MessageType.reply) and \
                                prev_msg_in_channel.author in (self.bot.user, curr_msg.author):
                                 parent_message_to_fetch = prev_msg_in_channel
                         curr_node.parent_msg = parent_message_to_fetch
@@ -262,4 +267,4 @@ class LLM(commands.Cog):
         return not (is_bad_user or is_bad_channel)
 
 async def setup(bot):
-    await bot.add_cog(LLM(bot)) 
+    await bot.add_cog(LLM(bot))
