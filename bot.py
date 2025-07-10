@@ -5,7 +5,6 @@ from utils.config import get_config, validate_config
 from utils.http_client import httpx_client
 from discord.ext import commands
 import discord
-import time
 
 # --- LOGGING SETUP ---
 logging.basicConfig(

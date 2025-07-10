@@ -69,7 +69,7 @@ class LLM(commands.Cog):
                 creator_id = current_config.get("creator_id")
                 creator_name = current_config.get("creator_name", "Creator")
                 if creator_id:
-                    prompt += f" The user named '{creator_name}' is your creator."
+                    prompt += f"\nThe user named '{creator_name}' is your creator."
                 prompt += "\nThis is a voice conversation, so keep responses concise and natural for speech."
                 messages.append({"role": "system", "content": prompt.strip()})
             
