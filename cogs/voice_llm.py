@@ -3,15 +3,11 @@ import logging
 import discord
 from discord.ext import commands
 from discord import app_commands, Interaction
-import io
-import wave
-import numpy as np
 from gtts import gTTS
 import tempfile
 import os
-from typing import Optional, Dict, Any
+from typing import Optional
 import whisper
-import torch
 from datetime import datetime
 import discord.ext.voice_recv as voice_recv
 import time
@@ -228,9 +224,7 @@ class VoiceLLM(commands.Cog):
         
         await interaction.response.send_message("Voice conversation stopped!")
     
-    @app_commands.command(name="voice_speak", description="Make the bot speak text in voice")
-    @app_commands.describe(text="The text you want the bot to speak")
-    async def speak_text(self, interaction: Interaction, text: str):
+    async def _speak_text_discord_command(self, interaction: Interaction, text: str):
         if not interaction.guild:
             await interaction.response.send_message("This command can only be used in a server (not in DMs).")
             return
@@ -241,25 +235,48 @@ class VoiceLLM(commands.Cog):
         await self.add_to_tts_queue(guild_id, text)
         await interaction.response.send_message(f"🗣️ Speaking: {text[:50]}{'...' if len(text) > 50 else ''}")
     
+    async def speak_text_terminal(self, guild_id: int, text: str):
+        """Make the bot speak text in voice, callable from terminal."""
+        if guild_id not in self.voice_clients:
+            logging.warning(f"Bot not in voice channel for guild {guild_id}. Cannot speak.")
+            return
+        await self.add_to_tts_queue(guild_id, text)
+        logging.info(f"🗣️ Speaking in guild {guild_id}: {text[:50]}{'...' if len(text) > 50 else ''}")
+
     async def add_to_tts_queue(self, guild_id: int, text: str):
-        """Add text to the TTS queue."""
-        if guild_id in self.audio_queue:
-            await self.audio_queue[guild_id].put(text)
+        """Add text to the TTS queue for the specified guild."""
+        if guild_id not in self.audio_queue:
+            logging.warning(f"No audio queue found for guild {guild_id}.")
+            return
+        queue = self.audio_queue[guild_id]
+        await queue.put(text)
+        logging.info(f"Added to TTS queue for guild {guild_id}: {text[:50]}{'...' if len(text) > 50 else ''}")
     
     async def process_audio_queue(self, guild_id: int):
-        """Process the TTS audio queue."""
-        while guild_id in self.audio_queue:
+        """Process the audio queue for TTS and play audio."""
+        if guild_id not in self.voice_clients:
+            logging.warning(f"Cannot process audio queue, bot not in voice channel for guild {guild_id}.")
+            return
+        
+        voice_client = self.voice_clients[guild_id]
+        queue = self.audio_queue[guild_id]
+        
+        while True:
             try:
-                if self.audio_queue[guild_id].empty():
-                    await asyncio.sleep(0.1)
-                    continue
-                    
-                text = await self.audio_queue[guild_id].get()
+                # Wait for an item from the queue
+                text = await asyncio.wait_for(queue.get(), timeout=5.0)
+                
+                # Speak the text
                 await self.speak_text_async(guild_id, text)
                 
+                # Mark the task as done
+                queue.task_done()
+            except asyncio.TimeoutError:
+                # Timeout for queue get
+                continue
             except Exception as e:
-                logging.error(f"Error processing audio queue: {e}")
-                await asyncio.sleep(1)
+                logging.error(f"Error processing audio queue for guild {guild_id}: {e}")
+                break
     
     async def speak_text_async(self, guild_id: int, text: str):
         """Convert text to speech and play it."""
@@ -599,4 +616,4 @@ class VoiceLLM(commands.Cog):
             logging.info(f"[AudioSink] Cleanup completed for guild {self.guild_id}")
 
 async def setup(bot):
-    await bot.add_cog(VoiceLLM(bot)) 
+    await bot.add_cog(VoiceLLM(bot))

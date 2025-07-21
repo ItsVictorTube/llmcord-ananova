@@ -13,7 +13,7 @@ This guide will help you set up the voice features for your Discord LLM bot, inc
 
 - `/voice` - Start voice conversation with automatic STT/TTS
 - `/voice_stop` - Stop voice conversation and leave channel
-- `/voice_speak <text>` - Make bot speak specific text
+- `voice_speak <guild_id> <text>` - Make bot speak specific text (Terminal only)
 - `/voice_language <code>` - Set TTS language (e.g., `/voice_language es`)
 - `/voice_status` - Check voice conversation status
 - `/voice_help` - Show voice commands help
@@ -106,11 +106,30 @@ You should see messages indicating:
 
 ### Manual TTS
 
-Use `/voice_speak` to make the bot speak specific text:
+Use `voice_speak <guild_id> <text>` in the terminal to make the bot speak specific text in a designated guild:
 
 ```
-/voice_speak Hello, this is a test message
+voice_speak 123456789012345678 Hello, this is a test message
 ```
+Replace `123456789012345678` with the actual ID of the Discord guild (server) where the bot is connected to a voice channel.
+
+### Terminal Commands
+
+In addition to Discord commands, you can now interact with the bot directly from your terminal while it's running. When you start the bot with `python bot.py`, you will see a `>` prompt in your terminal. You can type commands here.
+
+**How to use:**
+1. Start the bot: `python bot.py`
+2. In your terminal, you will see a `>` prompt.
+3. Type the command and its arguments (if any) and press Enter.
+
+**Example (Voice Speak):**
+```
+voice_speak 123456789012345678 Hello from the terminal!
+```
+
+**Note:** For Discord-specific commands (like `/voice`, `/voice_stop`), you will still use them within Discord. The terminal interface is for direct interaction with the bot's functions, especially those not exposed as Discord commands.
+
+Type `exit` in the terminal to stop the terminal command input loop (the Discord bot will continue running).
 
 ### Check Status
 
@@ -206,4 +225,4 @@ Potential improvements for the voice features:
 - Voice command recognition
 - Custom voice models
 - Audio recording and playback
-- Voice channel moderation features 
+- Voice channel moderation features

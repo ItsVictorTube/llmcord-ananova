@@ -46,6 +46,38 @@ class LLM(commands.Cog):
             logging.warning("No models configured. LLM Cog will not function.")
             self.curr_model = "" # Ensure it remains empty if no models
 
+    async def _get_llm_response_for_terminal(self, user_message: str) -> str:
+        """Generates an LLM response for terminal input (simplified)."""
+        try:
+            current_config = await asyncio.to_thread(get_config)
+            provider_slash_model = self.curr_model
+            provider, model = provider_slash_model.split("/", 1) 
+            provider_config = current_config["providers"][provider]
+            base_url = provider_config["base_url"]
+            api_key = provider_config.get("api_key", "sk-no-key-required")
+            openai_client = AsyncOpenAI(base_url=base_url, api_key=api_key)
+            
+            messages = []
+            if system_prompt := current_config["system_prompt"]:
+                now = datetime.now().astimezone()
+                prompt = system_prompt.replace("{date}", now.strftime("%B %d, %Y")).replace("{time}", now.strftime("%I:%M %p %Z"))
+                messages.append({"role": "system", "content": prompt.strip()})
+            
+            messages.append({"role": "user", "content": user_message})
+            
+            response = await openai_client.chat.completions.create(
+                model=model, 
+                messages=messages, 
+                stream=False,
+                extra_body=current_config["models"].get(provider_slash_model)
+            )
+            
+            return (response.choices[0].message.content or "").strip()
+            
+        except Exception as e:
+            logging.error(f"Error generating LLM response for terminal: {e}")
+            return "I'm sorry, I encountered an error while processing your request."
+
     async def generate_voice_response(self, user_message: str, user_name: str, channel) -> str:
         """Generate a response for voice input."""
         try:

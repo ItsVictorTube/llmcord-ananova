@@ -17,19 +17,28 @@ class Admin(commands.Cog):
         self.curr_model = next(iter(config["models"]))
         logging.info("Admin Cog ready. Current model: %s", self.curr_model)
 
+    async def _switch_model_internal(self, model_name: str, user_id: int) -> str:
+        """Internal method to switch the current LLM model."""
+        config = get_config()
+        if user_id not in config["permissions"]["users"]["admin_ids"]:
+            return "You don't have permission to change the model."
+        
+        if model_name not in config["models"]:
+            return f"Model `{model_name}` not found in configuration."
+
+        self.curr_model = model_name
+        output = f"Model switched to: `{model_name}`"
+        logging.info(f"{output} (by user {user_id})")
+        return output
+
     @app_commands.command(name="model", description="View or switch the current LLM")
     async def model_command(self, interaction: Interaction, model: str) -> None:
         if model == self.curr_model:
             await interaction.response.send_message(f"Current model is already: `{self.curr_model}`", ephemeral=True)
             return
-        config = get_config()
-        if interaction.user.id in config["permissions"]["users"]["admin_ids"]:
-            self.curr_model = model
-            output = f"Model switched to: `{model}`"
-            logging.info(f"{output} (by user {interaction.user.id})")
-        else:
-            output = "You don't have permission to change the model."
-        await interaction.response.send_message(output, ephemeral=True)
+        
+        response_message = await self._switch_model_internal(model, interaction.user.id)
+        await interaction.response.send_message(response_message, ephemeral=True)
 
     @model_command.autocomplete("model")
     async def model_autocomplete(self, interaction: Interaction, current_input: str):
@@ -87,4 +96,4 @@ class Admin(commands.Cog):
             await interaction.followup.send("An error occurred. I might not be able to delete messages older than 14 days.")
 
 async def setup(bot):
-    await bot.add_cog(Admin(bot)) 
+    await bot.add_cog(Admin(bot))
